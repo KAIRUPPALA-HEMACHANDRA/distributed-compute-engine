@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  socket_server:
+    build: .
+    container_name: pcs_socket_engine
+    command: python server.py
+    ports:
+      - "5000:5000"
+    environment:
+      - AUTH_TOKEN=production_secret_key
+
+  rest_api:
+    build: .
+    container_name: pcs_rest_api
+    command: uvicorn api:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    depends_on:
+      - socket_server
+      - redis_queue
+    environment:
+      - AUTH_TOKEN=production_secret_key
+      
+  redis_queue:
+    image: redis:7-alpine
+    container_name: pcs_redis
+    ports:
+      - "6379:6379"
+
+  async_worker:
+    build: .
+    container_name: pcs_async_worker
+    command: python worker.py
+    depends_on:
+      - redis_queue
