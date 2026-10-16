@@ -1,6 +1,8 @@
-# .github/workflows/ci.yml
 name: Python Client-Server CI
 
+# This section dictates exactly when GitHub's cloud servers should trigger this automation.
+# It is configured to run automatically every time you push code to the main branch
+# or create a pull request, ensuring no broken code ever merges into production.
 on:
   push:
     branches: [ "main", "master" ]
@@ -9,25 +11,37 @@ on:
 
 jobs:
   test:
+    # This instructs GitHub to spin up a pristine, temporary Ubuntu Linux virtual machine.
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout Code Repository
+    # Step 1: The virtual machine starts completely empty. This action securely downloads 
+    # your exact repository code from GitHub into the temporary server's hard drive.
+    - name: Checkout Repository
       uses: actions/checkout@v3
-
-    - name: Set up Python 3.10 Environment
+    
+    # Step 2: This installs the specific version of Python your architecture requires, 
+    # ensuring the cloud environment matches your local development environment perfectly.
+    - name: Set up Python 3.10
       uses: actions/setup-python@v4
       with:
-        python-version: "3.10"
-
+        python-version: '3.10'
+        
+    # Step 3: This upgrades the package manager and installs all required libraries 
+    # (FastAPI, Redis, cryptography, etc.) from your requirements.txt file.
     - name: Install Dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install pytest
-
-    - name: Execute Test Suite
-      env:
-        # Provide a dummy token to satisfy the server's authentication requirement during CI
-        AUTH_TOKEN: ci_pipeline_secret 
-      run: |
-        pytest tests/ -v
+        pip install -r requirements.txt
+        
+    # Step 4: The critical security patch. Since we deliberately blocked your local cert.pem 
+    # and key.pem from uploading via .gitignore, this step forces the Linux runner to 
+    # dynamically forge brand new, ephemeral 4096-bit RSA TLS certificates. These certificates 
+    # exist only for the 30 seconds it takes to run the tests, and are immediately destroyed.
+    - name: Generate Ephemeral TLS Certificates for CI Testing
+      run: openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -sha256 -days 365 -nodes -subj "/CN=localhost"
+      
+    # Step 5: With the dependencies installed and the cryptographic certificates in place, 
+    # the server can successfully boot up. This command runs your entire automated test suite.
+    - name: Run Integration Test Suite
+      run: pytest tests/ -v
