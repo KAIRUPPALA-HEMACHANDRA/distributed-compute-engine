@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Distributed Compute Engine Dashboard</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #0f172a; color: #f8fafc; margin: 0; padding: 24px; }
+        .container { max-width: 900px; margin: 0 auto; }
+        h1 { color: #38bdf8; margin-bottom: 5px; }
+        .subtitle { color: #94a3b8; margin-bottom: 24px; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .card { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 20px; }
+        label { display: block; margin-top: 12px; font-size: 14px; color: #cbd5e1; }
+        select, input { width: 100%; padding: 10px; margin-top: 6px; border-radius: 6px; border: 1px solid #475569; background: #0f172a; color: #fff; box-sizing: border-box; }
+        .btn-group { display: flex; gap: 10px; margin-top: 20px; }
+        button { flex: 1; padding: 12px; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; color: #fff; }
+        .btn-sync { background: #2563eb; }
+        .btn-sync:hover { background: #1d4ed8; }
+        .btn-async { background: #059669; }
+        .btn-async:hover { background: #047857; }
+        pre { background: #020617; padding: 14px; border-radius: 6px; overflow-x: auto; white-space: pre-wrap; word-wrap: break-word; max-height: 320px; color: #4ade80; border: 1px solid #1e293b; }
+        .badge { display: inline-block; padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: bold; background: #334155; }
+        .links { margin-top: 20px; font-size: 14px; }
+        .links a { color: #38bdf8; margin-right: 16px; text-decoration: none; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>Distributed Compute Engine</h1>
+    <div class="subtitle">Live Control Panel &bull; REST Gateway + Redis Queue + WebSocket Streaming</div>
+
+    <div class="grid">
+        <div class="card">
+            <h3>Submit Computation</h3>
+            <label>Auth Token (Header: x-auth-token)</label>
+            <input type="text" id="token" value="production_secret_key">
+
+            <label>Operation</label>
+            <select id="op">
+                <option value="power">power (base, exp)</option>
+                <option value="add">add (a, b)</option>
+                <option value="sub">sub (a, b)</option>
+                <option value="mul">mul (a, b)</option>
+                <option value="div">div (a, b)</option>
+                <option value="modulo">modulo (a, b)</option>
+                <option value="is_prime">is_prime (n)</option>
+                <option value="is_even">is_even (n)</option>
+                <option value="in_range">in_range (val, min, max)</option>
+                <option value="regex_match">regex_match (pattern, text)</option>
+            </select>
+
+            <label>Arguments (JSON Array)</label>
+            <input type="text" id="args" value="[2, 8000]">
+
+            <label>Timeout (Seconds, Max 10.0)</label>
+            <input type="number" id="timeout" value="10.0" step="0.5">
+
+            <div class="btn-group">
+                <button class="btn-sync" onclick="runSync()">Run Sync (HTTP)</button>
+                <button class="btn-async" onclick="runAsync()">Run Async (WebSocket)</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3>Live Execution Stream <span id="statusBadge" class="badge">IDLE</span></h3>
+            <pre id="output">Waiting for task submission...</pre>
+        </div>
+    </div>
+
+    <div class="links">
+        <a href="/docs" target="_blank">Swagger API Docs</a>
+        <a href="/metrics" target="_blank">Raw Prometheus Metrics</a>
+        <a href="http://localhost:9090" target="_blank">Prometheus UI (:9090)</a>
+        <a href="http://localhost:3000" target="_blank">Grafana Dashboard (:3000)</a>
+    </div>
+</div>
+
+<script>
+    const out = document.getElementById('output');
+    const badge = document.getElementById('statusBadge');
+
+    function getPayload() {
+        return {
+            op: document.getElementById('op').value,
+            args: JSON.parse(document.getElementById('args').value),
+            timeout: parseFloat(document.getElementById('timeout').value)
+        };
+    }
+
+    async function runSync() {
+        try {
+            badge.innerText = "RUNNING SYNC...";
+            out.innerText = "Sending synchronous HTTP POST to /api/v1/compute...";
+            const res = await fetch('/api/v1/compute', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-auth-token': document.getElementById('token').value
+                },
+                body: JSON.stringify(getPayload())
+            });
+            const data = await res.json();
+            badge.innerText = res.ok ? "FINISHED (HTTP)" : "ERROR";
+            out.innerText = JSON.stringify(data, null, 2);
+        } catch (err) {
+            badge.innerText = "ERROR";
+            out.innerText = "Client Error: " + err.message;
+        }
+    }
+
+    async function runAsync() {
+        try {
+            badge.innerText = "QUEUING...";
+            out.innerText = "1. Submitting task to Redis via POST /api/v1/compute/async...\n";
+            const res = await fetch('/api/v1/compute/async', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-auth-token': document.getElementById('token').value
+                },
+                body: JSON.stringify(getPayload())
+            });
+            const data = await res.json();
+            if (!res.ok) {
+                badge.innerText = "ERROR";
+                out.innerText += JSON.stringify(data, null, 2);
+                return;
+            }
+
+            const jobId = data.job_id;
+            out.innerText += `2. Task queued! Job ID: ${jobId}\n3. Opening live WebSocket stream to /ws/status/${jobId}...\n`;
+            badge.innerText = "STREAMING WS...";
+
+            const ws = new WebSocket(`ws://${window.location.host}/ws/status/${jobId}`);
+            ws.onmessage = (event) => {
+                const msg = JSON.parse(event.data);
+                out.innerText += `\n[WebSocket Push] Status: ${msg.status.toUpperCase()}\n` + JSON.stringify(msg, null, 2);
+                if (msg.status === "finished" || msg.status === "failed" || msg.status === "not_found") {
+                    badge.innerText = msg.status.toUpperCase() + " (WS)";
+                    ws.close();
+                }
+            };
+        } catch (err) {
+            badge.innerText = "ERROR";
+            out.innerText = "Client Error: " + err.message;
+        }
+    }
+</script>
+</body>
+</html>

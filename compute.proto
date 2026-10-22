@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package compute;
+
+// Binary representation of a compute engine request
+message ComputePayload {
+  string id = 1;
+  string op = 2;
+  string args_json = 3;
+  string auth_token = 4;
+  double timeout = 5;
+}

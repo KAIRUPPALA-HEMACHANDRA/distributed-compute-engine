@@ -1,75 +1,45 @@
 # Distributed Secure Compute Engine
 
-A highly resilient, containerized Remote Procedure Call (RPC) microservice engineered to offload and process CPU-bound mathematical operations and data validation tasks.
+A production-grade, containerized Remote Procedure Call (RPC) and asynchronous microservice platform engineered to execute CPU-bound mathematical operations and data validation workloads.
 
-This project bridges raw, low-latency socket networking with modern web accessibility. By combining a multithreaded Python TCP engine with a FastAPI REST wrapper and an asynchronous Redis job queue, the architecture ensures that heavy computational workloads never block user-facing web threads.
+This system bridges low-latency, TLS-encrypted TCP socket networking with modern web architecture, combining a multithreaded Python core engine, a FastAPI REST & WebSocket gateway, an asynchronous Redis job queue, Protocol Buffers binary serialization, and real-time Prometheus/Grafana observability.
 
-## 🏗️ Architectural Overview
-The system is split into three distinct layers, orchestrated seamlessly via Docker Compose:
+---
 
-Core Socket Engine (server.py): A multithreaded, bare-metal TCP server utilizing a custom JSON-over-TCP framing protocol. It enforces strict sliding-window rate limiting per IP address, token-based authentication, and wraps all transmissions in a secure TLS (ssl.wrap_socket) tunnel.
+## 🏗️ System Architecture
 
-REST API Gateway (api.py): A high-performance FastAPI web wrapper. It intercepts standard HTTP JSON payloads, validates them using strict Pydantic schemas, and translates them into the internal protocol required by the core engine.
+The platform is architected across six containerized services orchestrated via Docker Compose:
 
-Asynchronous Job Queue (worker.py & Redis): For computationally massive tasks (e.g., massive prime calculations or exponential math), the REST API instantly offloads the payload to a Redis queue. A dedicated background worker silently executes the CPU-bound task and stores the result, allowing the client to poll for completion without freezing the network connection.
+1. **Core Socket Engine (`server.py` - Port `5000`)**: A multithreaded TCP server utilizing newline-framed messaging wrapped in TLS (`ssl`). Enforces per-IP sliding-window rate limiting, token authentication, and strict execution timeouts (max 10.0s).
+2. **FastAPI REST & WebSocket Gateway (`api.py` - Port `8000`)**: Validates incoming HTTP payloads via Pydantic schemas, routes lightweight tasks synchronously, offloads heavy computations to Redis, and streams live job updates to browser clients over WebSockets.
+3. **Redis Message Broker (`redis:7-alpine` - Port `6379`)**: In-memory queue and state store backing asynchronous job persistence.
+4. **Asynchronous Background Worker (`worker.py`)**: Dedicated RQ worker node that pulls heavy CPU-bound tasks from Redis and executes them without blocking web-facing threads.
+5. **Prometheus Telemetry Server (`prom/prometheus` - Port `9090`)**: Scrapes real-time request counters and latency histograms from the FastAPI `/metrics` endpoint every 5 seconds.
+6. **Grafana Observability Dashboard (`grafana/grafana` - Port `3000`)**: Visualizes live API throughput, operation distribution, and latency metrics.
 
-## ✨ Key Features
+---
 
-Cryptographic Security: Enforced TLS 1.3 transport encryption alongside environment-level token authentication to prevent unauthorized execution.
+## ✨ Key Engineering Features
 
-DDoS & Overload Resilience: Custom IP-based sliding-window rate limiting and hardcoded maximum execution timeouts (10.0s) prevent malicious actors from locking server threads.
+* **Transport & Application Security**: 4096-bit RSA TLS encryption for raw socket transport alongside header/payload token authentication (`AUTH_TOKEN`).
+* **Traffic & Overload Protection**: Custom IP-based sliding-window rate limiter (`RATE_LIMIT_MAX_REQUESTS = 50`) and thread-level execution timeouts prevent resource exhaustion.
+* **Comprehensive Compute & Validation Suite**:
+  * **Math Operations**: `add`, `sub`, `mul`, `div`, `power` (with exponent safety bounds), and `modulo`.
+  * **Validation Operations**: `is_even`, `is_prime`, `in_range`, and `regex_match`.
+* **Live Web UI & WebSocket Streaming (`/dashboard`)**: Interactive browser control panel that submits async jobs to Redis and streams real-time status transitions (`QUEUED` -> `FINISHED`) and arbitrarily large integer results via WebSockets.
+* **Binary Protocol Buffers (`compute.proto` & `proto_codec.py`)**: Supports compact `proto3` binary serialization to minimize payload size compared to plain-text JSON.
+* **Observability Stack**: Built-in Prometheus instrumentation (`compute_requests_total` and `compute_request_latency_seconds`) paired with Grafana dashboards.
+* **Automated CI & Fuzz Testing**: GitHub Actions pipeline dynamically provisions ephemeral TLS certificates and executes 22 `pytest` suites—including **Hypothesis** property-based fuzz testing that bombards the engine with randomized malformed payloads.
 
-Mathematical & Validation Operations: Supports dynamic operations including add, sub, mul, div, power, modulo, is_even, is_prime, in_range, and complex regex_match.
+---
 
-Robust Observability: Structured JSON logging deployed across all nodes with automated file rotation, ensuring complete audit trails of client connections, handshake failures, and computational errors.
-
-Complete Containerization: Multi-stage Dockerfile and docker-compose.yml guarantee immediate, reproducible deployments across any cloud or local environment.
-
-Continuous Integration (CI): Automated GitHub Actions pipeline that dynamically provisions ephemeral TLS certificates to run the pytest suite on every code push.
-
-## 🚀 Getting Started
+## 🚀 Quick Start (Docker Compose)
 
 ### Prerequisites
+* Docker & Docker Compose
+* OpenSSL (for generating local self-signed TLS certificates)
 
-Docker and Docker Compose installed.
-
-OpenSSL (for generating local TLS certificates).
-
-### 1. Generate Security Certificates
-Before building the containers, generate a self-signed certificate in the project root to enable the TLS tunnel:
+### 1. Generate Local TLS Certificates
+In the project root directory, generate a self-signed certificate and private key:
+```bash
 openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -sha256 -days 365 -nodes -subj "/CN=localhost"
-
-### 2. Boot the Distributed Environment
-Use Docker Compose to build the multi-container ecosystem:
-docker-compose up --build
-This command will simultaneously launch the Core Socket Server, the Redis Cache, the Background Worker, and the FastAPI Gateway.
-
-## 📡 API Usage & Endpoints
-Once the containers are running, navigate to http://localhost:8000/docs to access the interactive Swagger UI.
-
-Authentication: All HTTP requests require the x-auth-token header. The default development token is production_secret_key.
-
-### Synchronous Execution (Lightweight Math)
-
-POST /api/v1/compute
-Executes lightweight mathematical operations and returns the result in the same HTTP connection.
-
-### Asynchronous Execution (For Heavy Workloads)
-
-POST /api/v1/compute/async
-Instantly queues a massive mathematical operation in Redis and returns a unique job_id.
-
-GET /api/v1/compute/status/{job_id}
-Retrieves the status (queued, finished, failed) and the final mathematical result of the background task once complete.
-
-## 🧪 Running the Test Suite
-To run the automated pytest integration suite against the raw socket engine locally:
-pytest tests/ -v
-
-
-## 🗺️ Future Roadmap
-While the core distributed architecture is stable, future iterations will focus on enhanced observability and binary efficiency:
-*   **Telemetry & Observability:** Integrating Prometheus metrics and a Grafana dashboard for real-time tracking of queue depths, rate-limit triggers, and compute latency.
-*   **Protocol Buffers (gRPC):** Migrating the internal communication payload from JSON over TCP to Protobufs to reduce serialization overhead and network bandwidth.
-*   **Live Dashboarding:** Implementing a WebSocket layer on the FastAPI gateway to stream asynchronous job completion statuses to frontend clients in real-time.
-*   **Fuzz Testing:** Expanding the `pytest` integration suite with mutation-driven fuzz testing to aggressively validate the Pydantic schemas against edge-case payload injection.

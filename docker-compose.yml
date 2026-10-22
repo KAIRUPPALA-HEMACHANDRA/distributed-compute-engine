@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   socket_server:
     build: .
@@ -34,3 +32,24 @@ services:
     command: python worker.py
     depends_on:
       - redis_queue
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: pcs_prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    depends_on:
+      - rest_api
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: pcs_grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    depends_on:
+      - prometheus
